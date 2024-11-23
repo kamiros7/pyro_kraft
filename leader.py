@@ -22,36 +22,51 @@ import Pyro5.server
 class Leader(object):
     def __init__(self):
             self.id = 1
-            self.log = []
+            self.log = [] #Each element is a pair, the first is the log, the second is a list that contains the broker clients that commited the respective log
             self.broker_clients = {}
+            self.voters_number = 3
     
     @Pyro5.server.expose
-    def getLog(self, broker_client_id, startIndex, desireIndex):
-        print(f"Hello from the server! Broker client with id {broker_client_id} called getLog sent: {startIndex} {desireIndex}")
+    def getLog(self, broker_client_id, startIndex):
+        desireIndex = startIndex + 1
 
+        print(f"Hello from the server! Broker client with id {broker_client_id} called getLog sent: {startIndex} {desireIndex}")
         if broker_client_id not in self.broker_clients:
             print(f"broker client {broker_client_id} isn't registered in leader")
-            return ("ERROR", -1, -1)
+            return ("ERROR", -1)
         
-        broker_id, (callback_uri, broker_state, broker_start_index) = self.broker_clients[broker_client_id]
+        callback_uri, broker_state, broker_start_index = self.broker_clients[broker_client_id]
 
         if (desireIndex > len(self.log)):
             print("desireIndex is outside than leader log")
-            return ("ERROR", broker_start_index, len(self.log))
+            return ("ERROR", broker_start_index)
 
         if (broker_start_index != startIndex):
             print(f"broker client {broker_client_id} is requesting data from a wrong start index")
-            return ("ERROR", broker_start_index, desireIndex)
+            return ("ERROR", broker_start_index)
 
-        self.broker_clients[broker_client_id] = ((callback_uri, broker_state, startIndex+desireIndex))
-        return ("OK", self.log[startIndex:desireIndex])
+        self.broker_clients[broker_client_id] = ((callback_uri, broker_state, desireIndex))
+        log_list = [pair[0] for pair in self.log[startIndex:desireIndex]] #To just return the logs
+        return ("OK", log_list)
     
+    @Pyro5.server.oneway
+    def confirmLogStored(self, broker_id, startIndex):
+        commited_brokers = self.log[startIndex][1]
+        if broker_id not in commited_brokers:
+            commited_brokers.append(broker_id)
+        
+        #Here receive that the specific broker client stored the log
+        #When all the voters stored the log, the log will be with status commited
+        #The way to get just the filtered list is:
+        #filtered_list = [pair[0] for pair in original_list if len(pair[1]) > 3]
+
     @Pyro5.server.expose
     def registerNewLog(self, newData):
         #Receives the new data from the producer
-        self.log.append(newData)
+        self.log.append((newData, []))
         self.notify_all_brokers()
-        return f"Hello from the server! You called setNewLog and sent: {newData}"
+        print(f"Hello from the server! You called setNewLog and sent: {newData}")
+        return
     
     @Pyro5.server.expose
     def registerBroker(self, broker_id, broker_uri, broker_state):

@@ -10,12 +10,13 @@ import Pyro5.server
 import sys
 
 def main():
-     id = sys.argv[0]
+     id = sys.argv[1]
      service_names = Pyro5.api.locate_ns()
      uri_leader = service_names.lookup("Leader_epoch1")
 
      leader_obj = Pyro5.api.Proxy(uri_leader)
-     leader_obj.registerNewLog(f"log_{id}")
+     log = f"log_{id}"
+     leader_obj.registerNewLog(log)
      
 if __name__ == "__main__":
      main()

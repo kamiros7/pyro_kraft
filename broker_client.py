@@ -35,19 +35,31 @@ class BrokerClient(object):
     def changeState(self, new_state):
         self.broker_state = new_state
 
-    def fetch_data_from_leader(self, data):
+    def fetch_data_from_leader(self):
         try:
             service_names = Pyro5.api.locate_ns()
             uri_leader = service_names.lookup("Leader_epoch1")
             leader = Pyro5.api.Proxy(uri_leader)
+
+            response = leader.getLog(self.broker_id, len(self.log[1]))
+            print(f"Raw response: {response}")
+            status, data = response
             
-            response = leader.get_data()
-            print(f"Fetched data from leader: {response}")
-            # Safely update log
-            with self.lock:
-                self.log[1].append(response)
-                self.log = (self.log[0] + 1, self.log[1])
-                print(f"Updated log: {self.log}")
+            if (status == "OK"):
+                with self.lock:
+                    print(f"Updated log: {self.log}")
+                    log_entries = data
+                    self.log[1].extend(log_entries)
+                    self.log = (self.log[0] + 1, self.log[1])
+                    ##Here, the client need to communicate that was stored the data (may be a oneway)
+            elif status == "ERROR":
+                # Update the client log to be the same as the leader's
+                print(f"Error occurred to get the date. Start index: {broker_start_index}")
+                broker_start_index = data
+                with self.lock:
+                    self.log = (broker_start_index, self.log[:broker_start_index])
+            else:
+                print(f"Unexpected status: {status}")
         except Exception as e:
             print(f"Error fetching data from leader: {e}")
     
