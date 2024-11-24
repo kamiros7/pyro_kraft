@@ -41,7 +41,8 @@ class BrokerClient(object):
             uri_leader = service_names.lookup("Leader_epoch1")
             leader = Pyro5.api.Proxy(uri_leader)
 
-            response = leader.getLog(self.broker_id, len(self.log[1]))
+            start_index_to_request = len(self.log[1])
+            response = leader.getLog(self.broker_id, start_index_to_request)
             print(f"Raw response: {response}")
             status, data = response
             
@@ -51,7 +52,8 @@ class BrokerClient(object):
                     log_entries = data
                     self.log[1].extend(log_entries)
                     self.log = (self.log[0] + 1, self.log[1])
-                    ##Here, the client need to communicate that was stored the data (may be a oneway)
+
+                    leader.confirmLogStored(self.broker_id, start_index_to_request)
             elif status == "ERROR":
                 # Update the client log to be the same as the leader's
                 print(f"Error occurred to get the date. Start index: {broker_start_index}")
@@ -80,6 +82,7 @@ def main():
     leader_obj = Pyro5.api.Proxy(uri_leader)
     leader_obj.registerBroker(broker_client.broker_id, broker_client.broker_uri, broker_client.broker_state)
 
+    ## Aqui criar uma thread que de tempos em tempos, chama uma função que manda heartbeat para lider (manda apenas id)
     daemon.requestLoop()
 
 if __name__ == "__main__":
