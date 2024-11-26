@@ -22,7 +22,9 @@ import datetime
 import threading
 import time
 
-LIMIT_LIFE_TIME = 60  # Lifetime in seconds (e.g., 60 seconds)
+LIMIT_LIFE_TIME = 10  # Lifetime in seconds (e.g., 60 seconds)
+TOLERANCE_FAIL = 1
+COMMITED_MINIMUM = 1 # After change to 2 (Quórum: n/2 + 1)
 
 class Leader(object):
     def __init__(self):
@@ -31,7 +33,6 @@ class Leader(object):
             self.commited_log = []
             self.broker_clients = {}
             self.broker_clients_heartbeat = {}
-            self.voters_number = 1
             self.lock = threading.Lock()  # Lock to ensure thread-safe access
     
     @Pyro5.server.expose
@@ -64,13 +65,8 @@ class Leader(object):
         if broker_id not in commited_brokers:
             commited_brokers.append(broker_id)
         
-        if len(commited_brokers) >= self.voters_number and self.log[startIndex][0] not in self.commited_log:
+        if len(commited_brokers) >= COMMITED_MINIMUM and self.log[startIndex][0] not in self.commited_log:
             self.commited_log.append(self.log[startIndex][0])
-        
-        #Here receive that the specific broker client stored the log
-        #When all the voters stored the log, the log will be with status commited
-        #The way to get just the filtered list is:
-        #filtered_list = [pair[0] for pair in original_list if len(pair[1]) > 3]
 
     @Pyro5.server.expose
     def getCommitedLog(self, startIndex):
@@ -99,12 +95,15 @@ class Leader(object):
     @Pyro5.server.oneway
     def update_broker_timestamp(self, broker_client_id):
         current_timestamp = datetime.datetime.now()
-        self.broker_clients_heartbeat[broker_client_id] = current_timestamp
-        print(f"Updated broker {broker_client_id} with timestamp {current_timestamp}")
+        with self.lock:
+            self.broker_clients_heartbeat[broker_client_id] = current_timestamp
+            print(f"Updated broker {broker_client_id} with timestamp {current_timestamp}")
 
     def notify_all_brokers(self):
+        print(f"notify all broker {self.broker_clients}")
         for broker_id, (callback_uri, broker_state, _) in self.broker_clients.items():
             # We going to notify just the broker clients that are voters (observer doesnt receive the data or request data)
+            print(f"notify brokers {broker_id} {broker_state}")
             if broker_state == 'observer':
                 continue
 
@@ -127,26 +126,51 @@ class Leader(object):
     
     def monitor_broker_lifetimes(self):
         while True:
+            time.sleep(5)
             expired_brokers = self.collect_expired_brokers()
             if expired_brokers:
                 print(f"Expired brokers: {expired_brokers}")
-
-                ##Here for each expired broker, call the updateLog to the correct broker
-                
+                for broker_client_id in expired_brokers:
+                    _, broker_state, _ = self.broker_clients[broker_client_id]
+                    if broker_state == "voter":
+                        self.remove_voter(broker_client_id)
+                        self.electObserverToVoter()
             else:
                 print("No expired brokers.")
-            time.sleep(5)
+    
+    def electObserverToVoter(self):
+        broker_client_id, callback_uri, broker_state, broker_start_index = self.find_observer_broker()
+        if broker_client_id == None:
+            return
+        
+        try:
+            broker_client = Pyro5.api.Proxy(callback_uri)
+            broker_client.electClient()
+            self.broker_clients[broker_client_id] = (callback_uri, "voter", broker_start_index)
+        except Exception as e:
+                print(f"Failed to elect broker {broker_client_id}: {e}")
+
+    def find_observer_broker(self):
+        for broker_client_id, (callback_uri, broker_state, broker_start_index) in self.broker_clients.items():
+            if broker_state == "observer":
+                return broker_client_id, callback_uri, broker_state, broker_start_index
+        return None, None, None, None
+    
+    def remove_voter(self, broker_client_id):
+        self.broker_clients_heartbeat.pop(broker_client_id, None)
+        self.broker_clients.pop(broker_client_id, None)
+
 
 def main():     
-    # Server-side code
+    
+    leader = Leader()
     daemon = Daemon()
-    uri = daemon.register(Leader(), 'Leader_epoch1')
+    uri = daemon.register(leader, 'Leader_epoch1')
     print("Server started at:", uri)
 
     name_server = Pyro5.api.locate_ns()
     name_server.register('Leader_epoch1', uri)
 
-    leader = Leader()
     monitor_thread = threading.Thread(target=leader.monitor_broker_lifetimes)
     monitor_thread.daemon = True  # Ensure the thread stops when the main program exits
     monitor_thread.start()

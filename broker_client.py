@@ -14,6 +14,7 @@ from Pyro5.api import Daemon, Proxy
 import Pyro5.server
 import sys
 import threading
+import time
 
 class BrokerClient(object):
     def __init__(self, broker_id, broker_state):
@@ -27,6 +28,16 @@ class BrokerClient(object):
     @Pyro5.api.callback
     def updateLog(self):
         print(f"Hello from the client! called updateLog")
+        thread = threading.Thread(target=self.fetch_data_from_leader)
+        thread.start()
+        return
+    
+    #This function will be used just to receive the notification
+    @Pyro5.api.expose
+    @Pyro5.api.callback
+    def electClient(self):
+        self.changeState("voter")
+        print(f"Hello from the client! called electClient")
         thread = threading.Thread(target=self.fetch_data_from_leader)
         thread.start()
         return
@@ -48,7 +59,6 @@ class BrokerClient(object):
             
             if (status == "OK"):
                 with self.lock:
-                    print(f"Updated log: {self.log}")
                     log_entries = data
                     self.log[1].extend(log_entries)
                     self.log = (self.log[0] + 1, self.log[1])
@@ -64,6 +74,17 @@ class BrokerClient(object):
                 print(f"Unexpected status: {status}")
         except Exception as e:
             print(f"Error fetching data from leader: {e}")
+    
+    def sendHeartBeat(self, uri_leader):
+        with Pyro5.api.Proxy(uri_leader) as leader_obj:
+            while True:
+                # Wait for 2 seconds before the next iteration
+                time.sleep(2)
+                try:
+                    leader_obj.update_broker_timestamp(self.broker_id)
+                except Exception as e:
+                    print(f"An error occurred to send the heartbeat from {self.broker_id}: {e}")
+
     
 def main():
     broker_client = BrokerClient(sys.argv[1], sys.argv[2])
@@ -81,6 +102,10 @@ def main():
 
     leader_obj = Pyro5.api.Proxy(uri_leader)
     leader_obj.registerBroker(broker_client.broker_id, broker_client.broker_uri, broker_client.broker_state)
+
+    log_thread = threading.Thread(target=broker_client.sendHeartBeat, args=(uri_leader,))
+    log_thread.daemon = True  # Optional: Ensures the thread stops when the main program exits
+    log_thread.start()
 
     ## Aqui criar uma thread que de tempos em tempos, chama uma função que manda heartbeat para lider (manda apenas id)
     daemon.requestLoop()

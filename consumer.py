@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+
+# To run the consuner, put in terminal:
+# python3 ./consumer.py
+
 import time
 import threading
 import Pyro5.api
@@ -29,7 +34,7 @@ def fetch_logs_periodically(shared_state):
         except Exception as e:
             print(f"An error occurred: {e}")
 
-        # Wait for 2 seconds before the next iteration
+        # Wait for 5 seconds before the next iteration
         time.sleep(5)
 
 if __name__ == "__main__":
