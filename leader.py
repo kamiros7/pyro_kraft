@@ -67,6 +67,8 @@ class Leader(object):
         
         if len(commited_brokers) >= COMMITED_MINIMUM and self.log[startIndex][0] not in self.commited_log:
             self.commited_log.append(self.log[startIndex][0])
+            # avisa o publicador
+            self.notify_producer(self.log[startIndex][2], self.log[startIndex][0])
 
     @Pyro5.server.expose
     def getCommitedLog(self, startIndex):
@@ -79,9 +81,9 @@ class Leader(object):
         return ("OK", self.commited_log[startIndex:])
 
     @Pyro5.server.expose
-    def registerNewLog(self, newData):
+    def registerNewLog(self, newData, uri_producer):
         #Receives the new data from the producer
-        self.log.append((newData, []))
+        self.log.append((newData, [], uri_producer))
         self.notify_all_brokers()
         print(f"Hello from the server! You called setNewLog and sent: {newData}")
         return
@@ -98,6 +100,12 @@ class Leader(object):
         with self.lock:
             self.broker_clients_heartbeat[broker_client_id] = current_timestamp
             print(f"Updated broker {broker_client_id} with timestamp {current_timestamp}")
+
+    def notify_producer(self, uri_producer, log):
+        print(f"notify producer")
+        producer = Pyro5.api.Proxy(uri_producer)
+        producer.updateLog(log)
+        return
 
     def notify_all_brokers(self):
         print(f"notify all broker {self.broker_clients}")
